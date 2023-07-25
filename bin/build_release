@@ -1,0 +1,40 @@
+#!/bin/bash
+set -e -o pipefail
+workspace=$(get_stacksource_workspace 2> /dev/null) || (
+  echo '' >&2
+  echo 'Unable to get StackSource workspace.' >&2
+  get_stacksource_workspace --nofail 2> /dev/null || (
+    echo -n 'Have you copied get_stacksource_workspace.sh ' >&2
+    echo 'to /usr/local/bin/get_stacksource_workspace?' >&2
+  );
+  echo '' >&2
+  exit 1
+)
+
+rm -rf $workspace/bloomlake/_sinatra_static_min
+mkdir $workspace/bloomlake/_sinatra_static_min
+
+# Hopefully one day we can turn on advanced optimizations, but we currently
+# have to settle for simple optimizations.
+java -jar $workspace/bin/closure_compiler.jar \
+   --language_in ECMASCRIPT5_STRICT \
+   --language_out ECMASCRIPT5_STRICT \
+   --js bloomlake/sinatra/index_bundle_release.js \
+   --js_output_file bloomlake/_sinatra_static_min/index.js
+
+$workspace/bin/cleancss \
+    --output bloomlake/_sinatra_static_min/index.css \
+    --rounding-precision \\-1 \
+    bloomlake/_sinatra_static/index.css
+
+cp bloomlake/_sinatra_static/favicon.png \
+    bloomlake/_sinatra_static_min/favicon.png
+
+cp bloomlake/_sinatra_static/logo.svg \
+    bloomlake/_sinatra_static_min/logo.svg
+
+cp bloomlake/_sinatra_static/logo_animated.svg \
+    bloomlake/_sinatra_static_min/logo_animated.svg
+
+cp bloomlake/_sinatra_static/project_declined.js \
+    bloomlake/_sinatra_static_min/project_declined.js

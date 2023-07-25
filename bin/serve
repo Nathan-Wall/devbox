@@ -1,0 +1,3 @@
+#!/bin/bash
+
+node /tmp/veil/stack/src/main/node_modules/serve/bin/serve.js $@

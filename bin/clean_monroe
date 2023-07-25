@@ -1,0 +1,3 @@
+#!/bin/bash
+
+bin/veil "rm -rf bloomlake/monroe/ bloomlake/_monroe_client/"

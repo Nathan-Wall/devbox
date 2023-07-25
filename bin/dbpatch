@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e -o pipefail
+workspace=$(get_stacksource_workspace 2> /dev/null)
+
+filename="$($workspace/experimental/users/nathan/bin/get_next_db_patch.sh).sql"
+rel_path="bloomlake/kennedy/BUILD/patches/$filename"
+touch "$workspace/$rel_path"
+echo "Created file //$rel_path"

@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e -o pipefail
+
+pods=$(kubectl get pods $pod_params)
+pods=$(echo "$pods" | grep 'platform-pr-bl-spruce')
+pod=$(echo "$pods" | head -1 | awk '{ print $1 }')
+
+kubectl exec "$pod" -- tail $@ /etc/bloomlake/logs/spruce.out

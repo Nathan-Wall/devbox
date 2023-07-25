@@ -1,0 +1,10 @@
+DIR="/home/nathan/devbox/bash_files"
+. $DIR/vars
+. $DIR/ps1
+. $DIR/functions
+. $DIR/misc
+
+if [ -e ~/.bash_files/index ]; then
+  . ~/.bash_files/index
+fi
+

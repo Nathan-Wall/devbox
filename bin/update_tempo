@@ -1,0 +1,24 @@
+#!/bin/bash
+set -e -o pipefail
+workspace=$(get_stacksource_workspace 2> /dev/null) || (
+  echo '' >&2
+  echo 'Unable to get StackSource workspace.' >&2
+  get_stacksource_workspace --nofail 2> /dev/null || (
+    echo -n 'Have you copied get_stacksource_workspace.sh ' >&2
+    echo 'to /usr/local/bin/get_stacksource_workspace?' >&2
+  );
+  echo '' >&2
+  exit 1
+)
+
+veil="$workspace/tools/veil/veil.sh"
+out_dir="$workspace/tempo/dist"
+
+cd ~/tempo
+$veil -du "src/build.sh"
+$veil "cp src/compiler_bundle.js $out_dir/compiler.js"
+$veil "cp src/run_compiler_bundle.js $out_dir/compile.js"
+$veil "cp src/releaser_bundle.js $out_dir/releaser.js"
+
+babel="../../third_party/babel_polyfill"
+$veil "node src/build_runtime_bundle --babel $babel " > $out_dir/runtime.js

@@ -1,0 +1,271 @@
+#!/bin/bash
+set -e -o pipefail
+workspace=$(get_stacksource_workspace 2> /dev/null) || (
+  echo '' >&2
+  echo 'Unable to get StackSource workspace.' >&2
+  get_stacksource_workspace --nofail 2> /dev/null || (
+    echo -n 'Have you copied get_stacksource_workspace.sh ' >&2
+    echo 'to /usr/local/bin/get_stacksource_workspace?' >&2
+  );
+  echo '' >&2
+  exit 1
+)
+. $workspace/bin/check_stacksource_workspace --noveil
+
+function vecho() {
+  if [ $verbose -eq 1 ]; then
+    echo $@
+  fi
+}
+
+verbose=0
+verbose_arg=''
+if [ "$1" == '--verbose' ]; then
+  verbose=1
+  verbose_arg='--verbose'
+  shift
+fi
+
+port=8000
+if [ "$1" == '--port' ]; then
+  port=$2
+  shift
+  shift
+fi
+
+gms=1
+if [ "$1" == '--no_gms' ]; then
+  gms=0
+  shift
+fi
+
+gms_node_adapter=$gms
+if [ "$1" == '--no_gms_node_adapter' ]; then
+  gms_node_adapter=0
+  shift
+fi
+
+slack=''
+if [ "$1" == '--slack' ]; then
+  slack="--slack_config '$HOME/.bloomlake/slackbot'"
+  shift
+fi
+
+allow_inspect=0
+if [ "$1" == '--inspect' ]; then
+  allow_inspect=1
+  shift
+fi
+
+google_api=''
+if [ "$1" == '--google_api' ]; then
+  google_api="--google_api '$HOME/.bloomlake/google_api'"
+  shift
+fi
+
+chat_gpt_api=''
+if [ "$1" == '--chat_gpt' ]; then
+  chat_gpt_api="--chat_gpt_api '$HOME/.bloomlake/chat_gpt_api'"
+  shift
+fi
+
+intercom_config_file="$HOME/.bloomlake/intercom"
+intercom_config=''
+if [ -f "$intercom_config_file" ]; then
+  intercom_config="--intercom_config='$intercom_config_file'"
+fi
+
+pipedrive_config_file="$HOME/.bloomlake/pipedrive"
+pipedrive_config=''
+if [ "$1" == '--pipedrive' ]; then
+  pipedrive_config="--pipedrive_config='$pipedrive_config_file'"
+  shift
+fi
+
+conversions='--no_conversion_config'
+if [ "$1" == '--conversions' ]; then
+  conversions="--conversion_config '$HOME/.bloomlake/conversions'"
+  shift
+fi
+
+buildlabel="$1"
+if [ "$buildlabel" == '' ]; then
+  echo 'Please provide a build label.' 1>&2
+  exit 1
+fi
+vecho "Build label: $buildlabel"
+
+host="$2"
+if [ "$host" == '' ]; then
+  host='http://localhost'
+fi
+vecho "Host: $host"
+
+https=0
+if [ "${host:0:6}" == 'https:' ]; then
+  https=1
+fi
+
+domain='UNKNOWN_DOMAIN'
+if [ "${host:0:7}" == "http://" ]; then
+  domain="${host:7}"
+elif [ "${host:0:8}" == "https://" ]; then
+  domain="${host:8}"
+fi
+
+inspect_host=''
+if [ "$allow_inspect" == '1' ]; then
+  inspect_host='127.0.0.1'
+  if [ "$host" != 'http://localhost' ] && [ "$host" != 'http:/127.0.0.1' ]; then
+    inspect_host='0.0.0.0'
+  fi
+fi
+
+veil="$workspace/bin/veil"
+VEIL_PATH=$($veil "pwd")
+BUILD_LABEL_FILE="$VEIL_PATH/experimental/users/nathan/.last_bloomlake_build"
+export NODE_PATH="$NODE_PATH:$VEIL_PATH/node_modules"
+
+last_buildlabel=''
+if [ -e $BUILD_LABEL_FILE ]; then
+  last_buildlabel=$(cat $BUILD_LABEL_FILE)
+  vecho "Last build label: $last_buildlabel"
+fi
+
+if [ "$last_buildlabel" != "$buildlabel" ]; then
+  vecho 'Build will be started from scratch.'
+  $veil -du
+fi
+
+echo "$buildlabel" > $BUILD_LABEL_FILE
+
+monroe_port=$port
+static='--start_static_server'
+backend_root="$host:$monroe_port"
+upload_root="$host:$monroe_port"
+user_content='--start_user_content_server'
+franklin='--start_franklin_server'
+lackawanna='--start_lackawanna_server'
+log_lackawanna='--log_lackawanna'
+full_contact="--full_contact_config '$HOME/.bloomlake/full_contact'"
+google_knowledge_graph="--google_knowledge_graph_config '$HOME/.bloomlake/google_knowledge_graph'"
+piera="--start_pier_a_server $full_contact"
+ken_jennings="--start_ken_jennings_server $google_knowledge_graph"
+salinger="--start_salinger_server"
+auth="--start_auth_server"
+mercury="--start_mercury_server"
+if [ -f "$HOME/.bloomlake/radex" ]; then
+  radex="--radex_config '$HOME/.bloomlake/radex'"
+else
+  echo -n 'NOTICE: Starting without a radex data source. Disabling interest'
+  echo ' rate index lookups.'
+  radex="--no_radex"
+fi
+send_grid="--send_grid_config '$HOME/.bloomlake/send_grid'"
+slouch='--start_slouch_server'
+spruce="--start_spruce_server --spruce_out $VEIL_PATH/bloomlake/spruce.log"
+gatling_port=7050
+gatling="--gms_root $host:$gatling_port"
+gms_node_adapter_bundle='gatling/node_adapter/index_bundle'
+modules=$(
+  sed -E 's|([[:alnum:]/@.-]*):\s*(\^?[[:alnum:].-]*)\s*|\1|' \
+      "$workspace/third_party/node_modules/DEPENDENCIES/dependencies.txt" \
+      | grep -v '^$' | paste -s -d"," -
+)
+modules="$modules,$(<$workspace/tools/node/core_modules.txt)"
+gms_node_modules="$(echo "$modules" | awk '{print $1}' | paste -s -d, -)"
+local_only_insecure='--local_only_insecure'
+# Port 3000 is used by for Buble dev
+allow_origin_or_referrer="$host:$monroe_port,$host:3000,https://local.dev.stacksource.co:3000"
+save_config="$HOME/.bloomlake/save_config"
+bundle_sinatra=''
+runner='bloomlake/runner/index'
+bundle_runner=''
+key_file=''
+cert_file=''
+ca_file=''
+if [ $https -eq 1 ]; then
+  key_file="--key $HOME/.bloomlake/https/$domain/privkey.pem"
+  cert_file="--cert $HOME/.bloomlake/https/$domain/cert.pem"
+  ca_file="--ca $HOME/.bloomlake/https/$domain/ca.pem"
+  local_only_insecure=''
+fi
+gms_node_adapter_bin="\
+  $gms_node_adapter_bundle \
+      --port $gatling_port \
+      --node_modules $gms_node_modules \
+      --ignore_changes bloomlake/auth/client,bloomlake/ava,bloomlake/sinatra,common/components,suite,.git \
+      --inspect_host $host_without_protocol:9229 \
+      $key_file \
+      $cert_file \
+      $ca_file"
+if [ $gms_node_adapter -eq 0 ]; then
+  runner='bloomlake/runner/index_bundle'
+  bundle_runner='--release'
+  gms_node_adapter_bin=''
+  gatling='--start_gms'
+fi
+if [ $gms -eq 0 ]; then
+  gatling=''
+fi
+
+$veil -u
+vecho 'Building Bloomlake Runner...'
+$veil "bloomlake/BUILD/build.sh $verbose_arg $bundle_runner"
+if [ $gms -eq 0 ]; then
+  $veil "bloomlake/sinatra/BUILD/build.sh $verbose_arg --release"
+fi
+if [ $gms -eq 0 ]; then
+  $veil "cp bloomlake/sinatra/index_bundle.js \
+      bloomlake/_sinatra_static/index.js"
+fi
+if [ $gms_node_adapter -eq 1 ]; then
+  vecho "Bundling GMS Node Adapter..."
+  $veil "gatling/node_adapter/build.sh $verbose_arg"
+fi
+
+if [ -e "$HOME/.bloomlake/pwv2" ]; then
+  export BLOOM_PASSWORD_V2_CONFIG="$HOME/.bloomlake/pwv2"
+fi
+
+dbman="$workspace/bloomlake/kennedy/db/manager/dev_manager.sh"
+PYTHONPATH="$workspace" bin/veil "'$dbman' upgrade -y" > /dev/null
+export APP_ROOT="$host:$monroe_port"
+db_name=$(PYTHONPATH="$workspace" bin/veil "'$dbman' database_name")
+vecho "Database name: $db_name"
+vecho 'Starting Bloomlake Runner.'
+$veil "node $gms_node_adapter_bin $runner \
+    $local_only_insecure \
+    $static \
+    $user_content \
+    $franklin \
+    $lackawanna \
+    $radex \
+    $send_grid \
+    $slouch \
+    $slack \
+    $spruce \
+    $log_lackawanna \
+    $piera \
+    $ken_jennings \
+    $gatling \
+    $key_file \
+    $cert_file \
+    $ca_file \
+    $google_api \
+    $chat_gpt_api \
+    $conversions \
+    $intercom_config \
+    $pipedrive_config \
+    $salinger \
+    $auth \
+    $mercury \
+    --monroe_port $monroe_port \
+    --app_root $APP_ROOT \
+    --backend_root $backend_root \
+    --upload_root $upload_root \
+    --allow_origin_or_referrer $allow_origin_or_referrer \
+    --save_config $save_config \
+    --scheduled_task_interval 5000 \
+    --db_config '$HOME/.bloomlake/db_connection_info' \
+    --database $db_name"

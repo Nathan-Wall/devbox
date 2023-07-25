@@ -1,0 +1,27 @@
+# Encapsulating this code in a function keeps the variables from escaping to
+# the shell environment (since this script is sourced, not run in a sub-shell).
+function _update_ps1() {
+  show_user=0
+  if [ "$USER" != 'nathan' ] \
+      && [ "$USER" != 'wnwall' ] \
+      && [ "$USER" != 'nathan_stacksource_com' ] ; then
+    show_user=1
+  fi
+
+  show_host=1
+
+  user=""
+  if [ $show_user -ne 0 ]; then
+    user="\u@"
+  fi
+
+  host=""
+  if [ $show_host -ne 0 ]; then
+    host=""
+  fi
+
+  echo "$user$host\$(ps1_dir_fmt) "
+}
+
+export PS1="$(_update_ps1)"
+

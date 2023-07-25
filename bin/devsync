@@ -1,0 +1,33 @@
+#!/bin/bash
+workspace=$(get_stacksource_workspace 2> /dev/null)
+if [ "$workspace" == '' ]; then
+  echo '' >&2
+  echo 'Unable to get StackSource workspace.' >&2
+  get_stacksource_workspace --nofail 2> /dev/null || (
+    echo -n 'Have you copied get_stacksource_workspace.sh ' >&2
+    echo 'to /usr/local/bin/get_stacksource_workspace?' >&2
+  );
+  echo '' >&2
+  exit 1
+fi
+
+DEST="$1"
+
+if [ -z "$DEST" ]; then
+  echo "Please provide a host."
+  exit 1
+fi
+
+rsync='rsync -azvq --exclude ".git/"'
+
+$rsync $workspace/ $DEST:$workspace || exit 1
+
+cd $workspace || exit 1
+inotifywait -r -m -e close_write --format '%w%f' . |\
+while read file
+do
+  echo $file
+  $rsync --delete $file ${DEST}:$workspace/$file
+  echo -n 'Completed at '
+  date
+done

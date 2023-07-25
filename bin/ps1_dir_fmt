@@ -1,0 +1,21 @@
+#!/bin/bash
+
+cwd="$(pwd)"
+
+devbox="$(devspace devbox)"
+
+# Look for .devspace
+workspace_dir="$(devspace 2> /dev/null)"
+workspace_dir_len=${#workspace_dir}
+
+if [ "$workspace_dir" != '' ]; then
+  . $devbox/bash/colors_ps1
+  rel_to_workspace_name="${cwd:workspace_dir_len}"
+  IFS='/' read -ra parts <<< "$workspace_dir"
+  workspace_name="${parts[-1]}"
+  echo -en "$Black$On_Yellow$workspace_name$Color_Off"
+  echo -en "$Black$On_Blue$rel_to_workspace_name$Color_Off"
+  echo -en "${White}\$${Color_Off}"
+else
+  echo -n "$cwd\$"
+fi

@@ -1,0 +1,8 @@
+#!/bin/bash
+domain="$1"
+if [ "$domain" == '' ]; then
+  echo 'Domain must be specified' >&2
+  exit 1
+fi
+sudo cp "/etc/letsencrypt/live/$domain/privkey.pem" "$HOME/.bloomlake/https/certificate.key"
+sudo cp "/etc/letsencrypt/live/$domain/cert.pem" "$HOME/.bloomlake/https/certificate.pem"

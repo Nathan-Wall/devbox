@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e -o pipefail
+
+TMPFILE=$(mktemp -u).$RANDOM
+echo $TMPFILE
+mv "$1" "$TMPFILE"
+mv "$2" "$1"
+mv "$TMPFILE" "$2"

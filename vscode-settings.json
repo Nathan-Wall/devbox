@@ -1,0 +1,14 @@
+{
+    "remote.SSH.remotePlatform": {
+        "nathan.dev.stacksource.co": "linux",
+        "dev.nathan.wall.coffee": "linux",
+        "127.0.0.1": "linux"
+    },
+    "editor.accessibilitySupport": "off",
+
+    "editor.rulers": [80],
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "editor.tabSize": 2,
+}
+

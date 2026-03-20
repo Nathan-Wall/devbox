@@ -1,4 +1,5 @@
-export PATH="$PATH:$HOME/bin:$HOME/.local/bin:/home/nathan/devbox/bin:$EC2_HOME/bin"
+DEVBOX_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="$PATH:$HOME/bin:$HOME/.local/bin:$DEVBOX_ROOT/bin${EC2_HOME:+:$EC2_HOME/bin}"
 export VISUAL='vim'
 export EDITOR="$VISUAL"
 export KOPS_STATE_STORE='s3://clusters.kube.stacksource.co'

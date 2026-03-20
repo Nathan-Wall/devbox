@@ -1,13 +1,16 @@
 #!/bin/bash
 set -e -o pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+devbox_root="$(cd -- "$script_dir/.." && pwd)"
+
 if [ "$1" == 'devbox' ]; then
-  echo '/home/nathan/devbox'
+  echo "$devbox_root"
   exit 0
 fi
 
 # Look for .devspace
-until [ -e .devspace ] || [ $(pwd) == '/' ]; do
+until [ -e .devspace ] || [ "$(pwd)" == '/' ]; do
   cd ..
 done
 if [ -e .devspace ]; then

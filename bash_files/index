@@ -1,10 +1,9 @@
-DIR="/home/nathan/devbox/bash_files"
-. $DIR/vars
-. $DIR/ps1
-. $DIR/functions
-. $DIR/misc
+DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$DIR/vars"
+. "$DIR/ps1"
+. "$DIR/functions"
+. "$DIR/misc"
 
-if [ -e ~/.bash_files/index ]; then
-  . ~/.bash_files/index
+if [ -e "$HOME/.bash_files/index" ]; then
+  . "$HOME/.bash_files/index"
 fi
-

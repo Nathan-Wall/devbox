@@ -3,6 +3,7 @@
 function _update_ps1() {
   show_user=0
   if [ "$USER" != 'nathan' ] \
+      && [ "$USER" != 'ubuntu' ] \
       && [ "$USER" != 'wnwall' ] \
       && [ "$USER" != 'nathan_stacksource_com' ] ; then
     show_user=1
@@ -24,4 +25,3 @@ function _update_ps1() {
 }
 
 export PS1="$(_update_ps1)"
-

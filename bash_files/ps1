@@ -2,6 +2,37 @@
 # the shell environment (since this script is sourced, not run in a sub-shell).
 . "$DEVBOX_ROOT/bash/colors_ps1"
 
+_DEVBOX_ORIGINAL_PROMPT_COMMAND="$PROMPT_COMMAND"
+
+function _devbox_now_ms() {
+  if [ -n "${EPOCHREALTIME:-}" ]; then
+    local seconds="${EPOCHREALTIME%%.*}"
+    local micros="${EPOCHREALTIME#*.}"
+
+    if [ "$micros" = "$EPOCHREALTIME" ]; then
+      micros='000000'
+    fi
+
+    micros="${micros}000"
+    echo "$((10#$seconds * 1000 + 10#${micros:0:3}))"
+  else
+    echo "$((SECONDS * 1000))"
+  fi
+}
+
+function _devbox_preexec() {
+  if [ -n "${_DEVBOX_IN_PROMPT_COMMAND:-}" ] || [ -n "${COMP_LINE:-}" ]; then
+    return
+  fi
+
+  if [ "${_DEVBOX_COMMAND_ACTIVE:-0}" -ne 0 ]; then
+    return
+  fi
+
+  _DEVBOX_COMMAND_ACTIVE=1
+  _DEVBOX_COMMAND_START_MS="$(_devbox_now_ms)"
+}
+
 # Set DEVBOX_BOX_TAG to override the default short hostname, or to an empty
 # string to hide the box tag entirely.
 function _ps1_box_tag() {
@@ -21,8 +52,53 @@ function _ps1_box_tag() {
   fi
 }
 
+function _devbox_format_duration() {
+  local duration_ms="$1"
+
+  if [ "$duration_ms" -lt 1000 ]; then
+    echo "${duration_ms}ms"
+  elif [ "$duration_ms" -lt 60000 ]; then
+    local seconds=$((duration_ms / 1000))
+    local tenths=$(((duration_ms % 1000) / 100))
+
+    if [ "$tenths" -ne 0 ]; then
+      echo "${seconds}.${tenths}s"
+    else
+      echo "${seconds}s"
+    fi
+  elif [ "$duration_ms" -lt 3600000 ]; then
+    local minutes=$((duration_ms / 60000))
+    local seconds=$(((duration_ms % 60000) / 1000))
+    echo "${minutes}m${seconds}s"
+  else
+    local hours=$((duration_ms / 3600000))
+    local minutes=$(((duration_ms % 3600000) / 60000))
+    echo "${hours}h${minutes}m"
+  fi
+}
+
+function _ps1_status_segment() {
+  if [ "${_DEVBOX_LAST_STATUS:-0}" -ne 0 ]; then
+    echo -en "${White}${On_Red} exit ${_DEVBOX_LAST_STATUS} ${Color_Off}"
+  fi
+}
+
+# Set DEVBOX_PROMPT_DURATION_MIN_MS to control when the duration block appears.
+function _ps1_duration_segment() {
+  local min_duration_ms="${DEVBOX_PROMPT_DURATION_MIN_MS:-2000}"
+
+  if [ -n "${_DEVBOX_LAST_DURATION_MS:-}" ] \
+      && [ "${_DEVBOX_LAST_DURATION_MS}" -ge "$min_duration_ms" ]; then
+    echo -en "${White}${On_Black} $(_devbox_format_duration "$_DEVBOX_LAST_DURATION_MS") ${Color_Off}"
+  fi
+}
+
 function _update_ps1() {
-  show_user=0
+  local metadata_line=''
+  local body_line=''
+  local segment=''
+  local box_tag=''
+  local show_user=0
   if [ "$USER" != 'nathan' ] \
       && [ "$USER" != 'ubuntu' ] \
       && [ "$USER" != 'wnwall' ] \
@@ -30,19 +106,71 @@ function _update_ps1() {
     show_user=1
   fi
 
-  show_host=1
+  local show_host=1
 
-  user=""
+  local user=""
   if [ $show_user -ne 0 ]; then
     user="\u@"
   fi
 
-  host=""
+  local host=""
   if [ $show_host -ne 0 ]; then
     host=""
   fi
 
-  echo "\$(_ps1_box_tag)$user$host\$(ps1_dir_fmt) "
+  segment="$(_ps1_status_segment)"
+  if [ "$segment" != '' ]; then
+    if [ "$metadata_line" != '' ]; then
+      metadata_line="$metadata_line "
+    fi
+    metadata_line="$metadata_line$segment"
+  fi
+
+  segment="$(_ps1_duration_segment)"
+  if [ "$segment" != '' ]; then
+    if [ "$metadata_line" != '' ]; then
+      metadata_line="$metadata_line "
+    fi
+    metadata_line="$metadata_line$segment"
+  fi
+
+  box_tag="$(_ps1_box_tag)"
+  body_line="${box_tag}${user}${host}$(ps1_dir_fmt) "
+
+  if [ "$metadata_line" != '' ]; then
+    PS1="${metadata_line}"$'\n'"${body_line}"
+  else
+    PS1="$body_line"
+  fi
 }
 
-export PS1="$(_update_ps1)"
+function _devbox_prompt_command() {
+  local last_status="$?"
+  local now_ms=''
+
+  _DEVBOX_IN_PROMPT_COMMAND=1
+  _DEVBOX_LAST_STATUS="$last_status"
+
+  if [ "${_DEVBOX_COMMAND_ACTIVE:-0}" -ne 0 ] \
+      && [ -n "${_DEVBOX_COMMAND_START_MS:-}" ]; then
+    now_ms="$(_devbox_now_ms)"
+    _DEVBOX_LAST_DURATION_MS="$((now_ms - _DEVBOX_COMMAND_START_MS))"
+  else
+    _DEVBOX_LAST_DURATION_MS=''
+  fi
+
+  _DEVBOX_COMMAND_ACTIVE=0
+  unset _DEVBOX_COMMAND_START_MS
+
+  _update_ps1
+
+  if [ -n "$_DEVBOX_ORIGINAL_PROMPT_COMMAND" ]; then
+    eval "$_DEVBOX_ORIGINAL_PROMPT_COMMAND"
+  fi
+
+  unset _DEVBOX_IN_PROMPT_COMMAND
+}
+
+PROMPT_COMMAND="_devbox_prompt_command"
+trap '_devbox_preexec' DEBUG
+_devbox_prompt_command

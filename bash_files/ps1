@@ -1,5 +1,26 @@
 # Encapsulating this code in a function keeps the variables from escaping to
 # the shell environment (since this script is sourced, not run in a sub-shell).
+. "$DEVBOX_ROOT/bash/colors_ps1"
+
+# Set DEVBOX_BOX_TAG to override the default short hostname, or to an empty
+# string to hide the box tag entirely.
+function _ps1_box_tag() {
+  local default_box_tag="${HOSTNAME%%.*}"
+  local box_tag="$DEVBOX_BOX_TAG"
+
+  if [ -z "${DEVBOX_BOX_TAG+x}" ]; then
+    if [ "$default_box_tag" = '' ]; then
+      default_box_tag="$(hostname 2> /dev/null)"
+      default_box_tag="${default_box_tag%%.*}"
+    fi
+    box_tag="$default_box_tag"
+  fi
+
+  if [ "$box_tag" != '' ]; then
+    echo -en "${White}${On_IBlack}${box_tag}:${Color_Off}"
+  fi
+}
+
 function _update_ps1() {
   show_user=0
   if [ "$USER" != 'nathan' ] \
@@ -21,7 +42,7 @@ function _update_ps1() {
     host=""
   fi
 
-  echo "$user$host\$(ps1_dir_fmt) "
+  echo "\$(_ps1_box_tag)$user$host\$(ps1_dir_fmt) "
 }
 
 export PS1="$(_update_ps1)"

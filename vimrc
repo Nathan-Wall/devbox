@@ -14,7 +14,12 @@ let g:typescript_indent_disable = 1
 
 call plug#begin('~/.vim/plugged')
 Plug 'leafgarland/typescript-vim'
+Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
+Plug 'junegunn/fzf.vim'
 call plug#end()
+
+" Maps Ctrl+P to the :Files command (find files recursively)
+nnoremap <C-p> :Files<CR>
 
 let g:netrw_liststyle = 3
 let g:netrw_banner = 0

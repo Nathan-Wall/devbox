@@ -7,3 +7,4 @@ export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 
 # Prevent tmux from closing panes on Ctrl+D
 export IGNOREEOF=3
+

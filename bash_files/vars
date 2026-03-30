@@ -8,3 +8,8 @@ export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 # Prevent tmux from closing panes on Ctrl+D
 export IGNOREEOF=3
 
+# This is for terraform in various projects like townsquare and go-links.
+# I don't know if this is the optimal solution, more of just a get it
+# working thing.
+export AWS_PROFILE=tf-default
+

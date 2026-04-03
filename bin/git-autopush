@@ -63,7 +63,7 @@ if ! [[ "$interval" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
 fi
 
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
-  echo 'Not inside a git repository.' >&2
+  echo "Not inside a git repository: $(pwd -P)" >&2
   exit 1
 fi
 
@@ -104,13 +104,13 @@ push_current_head() {
 
 branch_name=$(current_branch)
 if [ -z "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ]; then
-  echo 'Detached HEAD without explicit git push arguments.' >&2
+  echo "Detached HEAD in repository '$repo_root' without explicit git push arguments." >&2
   echo 'Pass the push destination after --, for example: git-autopush -- origin HEAD' >&2
   exit 1
 fi
 
 if [ -n "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ] && ! has_upstream; then
-  echo "Branch '$branch_name' has no upstream configured." >&2
+  echo "Branch '$branch_name' in repository '$repo_root' has no upstream configured." >&2
   echo 'Run git push -u once, or pass explicit git push arguments after --.' >&2
   exit 1
 fi
@@ -140,7 +140,7 @@ while true; do
   branch_name=$(current_branch)
   if [ -z "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ]; then
     last_handled_head="$head"
-    echo "HEAD moved to $(git rev-parse --short "$head") in detached mode; skipping push." >&2
+    echo "HEAD in repository '$repo_root' moved to $(git rev-parse --short "$head") in detached mode; skipping push." >&2
     sleep "$interval"
     continue
   fi
@@ -148,7 +148,7 @@ while true; do
   if [ "${#push_args[@]}" -eq 0 ]; then
     if ! has_upstream; then
       last_handled_head="$head"
-      echo "Branch '$branch_name' has no upstream; skipping $(git rev-parse --short "$head")." >&2
+      echo "Branch '$branch_name' in repository '$repo_root' has no upstream; skipping $(git rev-parse --short "$head")." >&2
       sleep "$interval"
       continue
     fi

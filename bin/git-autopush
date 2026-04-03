@@ -1,0 +1,173 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: git-autopush [--once] [--interval SECONDS] [--] [git push args...]
+
+Wait for a new local commit, push it, then wait again.
+
+Options:
+  --once              Exit after the first successful push.
+  --interval SECONDS  Poll interval. Defaults to 2 seconds.
+  -h, --help          Show this help text.
+
+Anything after -- is passed directly to git push.
+
+Examples:
+  git-autopush
+  git-autopush --once
+  git-autopush --interval 1
+  git-autopush -- origin HEAD
+EOF
+}
+
+loop_forever=1
+interval=2
+push_args=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --once)
+      loop_forever=0
+      shift
+      ;;
+    --interval)
+      if [ $# -lt 2 ]; then
+        echo 'Missing value for --interval.' >&2
+        exit 1
+      fi
+      interval="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      push_args=("$@")
+      break
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if ! [[ "$interval" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "Invalid --interval value: $interval" >&2
+  exit 1
+fi
+
+if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+  echo 'Not inside a git repository.' >&2
+  exit 1
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+git_dir=$(git rev-parse --git-dir)
+cd "$repo_root"
+
+current_branch() {
+  git symbolic-ref -q --short HEAD 2>/dev/null || true
+}
+
+has_upstream() {
+  git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1
+}
+
+ahead_count() {
+  git rev-list --count '@{upstream}..HEAD'
+}
+
+sequencer_active() {
+  [ -d "$git_dir/rebase-merge" ] || \
+    [ -d "$git_dir/rebase-apply" ] || \
+    [ -d "$git_dir/sequencer" ]
+}
+
+push_current_head() {
+  local head_short
+  head_short=$(git rev-parse --short HEAD)
+
+  if [ "${#push_args[@]}" -gt 0 ]; then
+    git push "${push_args[@]}"
+  else
+    git push
+  fi
+
+  echo "Pushed $head_short at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+}
+
+branch_name=$(current_branch)
+if [ -z "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ]; then
+  echo 'Detached HEAD without explicit git push arguments.' >&2
+  echo 'Pass the push destination after --, for example: git-autopush -- origin HEAD' >&2
+  exit 1
+fi
+
+if [ -n "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ] && ! has_upstream; then
+  echo "Branch '$branch_name' has no upstream configured." >&2
+  echo 'Run git push -u once, or pass explicit git push arguments after --.' >&2
+  exit 1
+fi
+
+echo "Watching $repo_root"
+if [ -n "$branch_name" ]; then
+  echo "Branch: $branch_name"
+else
+  echo 'Branch: detached HEAD'
+fi
+echo "Poll interval: $interval seconds"
+
+last_handled_head=''
+
+while true; do
+  if sequencer_active; then
+    sleep "$interval"
+    continue
+  fi
+
+  head=$(git rev-parse HEAD)
+  if [ "$head" = "$last_handled_head" ]; then
+    sleep "$interval"
+    continue
+  fi
+
+  branch_name=$(current_branch)
+  if [ -z "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ]; then
+    last_handled_head="$head"
+    echo "HEAD moved to $(git rev-parse --short "$head") in detached mode; skipping push." >&2
+    sleep "$interval"
+    continue
+  fi
+
+  if [ "${#push_args[@]}" -eq 0 ]; then
+    if ! has_upstream; then
+      last_handled_head="$head"
+      echo "Branch '$branch_name' has no upstream; skipping $(git rev-parse --short "$head")." >&2
+      sleep "$interval"
+      continue
+    fi
+
+    if [ "$(ahead_count)" -eq 0 ]; then
+      last_handled_head="$head"
+      sleep "$interval"
+      continue
+    fi
+  fi
+
+  if push_current_head; then
+    last_handled_head="$head"
+    if [ "$loop_forever" -eq 0 ]; then
+      exit 0
+    fi
+  else
+    echo "git push failed for $(git rev-parse --short "$head"); will retry." >&2
+  fi
+
+  sleep "$interval"
+done

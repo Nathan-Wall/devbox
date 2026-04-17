@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e -o pipefail
+
+cd "$(devspace devbox)/codex-container"
+./upgrade.sh
+

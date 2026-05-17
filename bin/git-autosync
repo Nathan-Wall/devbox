@@ -1,0 +1,353 @@
+#!/bin/bash
+set -euo pipefail
+
+script_name=${GIT_AUTOSYNC_INVOKED_AS:-$(basename "$0")}
+default_auto_pull=1
+
+if [ "$script_name" = "git-autopush" ]; then
+  default_auto_pull=0
+fi
+
+usage() {
+  cat <<EOF
+Usage: $script_name [--once] [--interval SECONDS] [--no-pull] [--] [git push args...]
+
+Keep a branch in sync:
+- Push local commits when the current branch is ahead of its upstream.
+- Fast-forward to upstream changes when pulling is enabled and the worktree is clean.
+
+Options:
+  --once              Exit after the first successful sync action.
+  --interval SECONDS  Poll interval. Defaults to 10 seconds with pulling enabled,
+                      or 2 seconds with --no-pull.
+  --no-pull           Disable automatic fast-forward pulls.
+  -h, --help          Show this help text.
+
+Anything after -- is passed directly to git push.
+
+Examples:
+  $script_name
+  $script_name --once
+  $script_name --interval 5
+  $script_name --no-pull
+  $script_name -- origin HEAD
+EOF
+}
+
+loop_forever=1
+interval=''
+auto_pull=$default_auto_pull
+push_args=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --once)
+      loop_forever=0
+      shift
+      ;;
+    --interval)
+      if [ $# -lt 2 ]; then
+        echo 'Missing value for --interval.' >&2
+        exit 1
+      fi
+      interval="$2"
+      shift 2
+      ;;
+    --no-pull)
+      auto_pull=0
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      push_args=("$@")
+      break
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ -z "$interval" ]; then
+  if [ "$auto_pull" -eq 1 ]; then
+    interval=10
+  else
+    interval=2
+  fi
+fi
+
+if ! [[ "$interval" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "Invalid --interval value: $interval" >&2
+  exit 1
+fi
+
+if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+  echo "Not inside a git repository: $(pwd -P)" >&2
+  exit 1
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+git_dir=$(git rev-parse --git-dir)
+cd "$repo_root"
+
+current_branch() {
+  git symbolic-ref -q --short HEAD 2>/dev/null || true
+}
+
+has_upstream() {
+  git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1
+}
+
+ahead_count() {
+  git rev-list --count '@{upstream}..HEAD'
+}
+
+behind_count() {
+  git rev-list --count 'HEAD..@{upstream}'
+}
+
+upstream_remote() {
+  local branch_name
+
+  branch_name=$(current_branch)
+  git config --get "branch.$branch_name.remote" 2>/dev/null || true
+}
+
+sequencer_active() {
+  [ -d "$git_dir/rebase-merge" ] || \
+    [ -d "$git_dir/rebase-apply" ] || \
+    [ -d "$git_dir/sequencer" ] || \
+    [ -f "$git_dir/MERGE_HEAD" ] || \
+    [ -f "$git_dir/CHERRY_PICK_HEAD" ] || \
+    [ -f "$git_dir/REVERT_HEAD" ]
+}
+
+worktree_clean() {
+  [ -z "$(git status --porcelain --untracked-files=normal)" ]
+}
+
+fetch_upstream() {
+  local remote_name
+
+  remote_name=$(upstream_remote)
+  if [ -n "$remote_name" ]; then
+    git fetch --quiet "$remote_name"
+  else
+    git fetch --quiet
+  fi
+}
+
+push_current_head() {
+  local head_short
+  head_short=$(git rev-parse --short HEAD)
+
+  if [ "${#push_args[@]}" -gt 0 ]; then
+    git push "${push_args[@]}"
+  else
+    git push
+  fi
+
+  echo "Pushed $head_short at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+}
+
+fast_forward_upstream() {
+  local before_short
+  local after_short
+  local upstream_name
+
+  before_short=$(git rev-parse --short HEAD)
+  upstream_name=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')
+  git merge --ff-only --quiet '@{upstream}'
+  after_short=$(git rev-parse --short HEAD)
+
+  echo "Fast-forwarded $before_short to $after_short from $upstream_name at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+}
+
+branch_name=$(current_branch)
+if [ -z "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ]; then
+  echo "Detached HEAD in repository '$repo_root' without explicit git push arguments." >&2
+  echo "Pass the push destination after --, for example: $script_name -- origin HEAD" >&2
+  exit 1
+fi
+
+if [ -n "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ] && ! has_upstream; then
+  echo "Branch '$branch_name' in repository '$repo_root' has no upstream configured." >&2
+  echo 'Run git push -u once, or pass explicit git push arguments after --.' >&2
+  exit 1
+fi
+
+echo "Watching $repo_root"
+if [ -n "$branch_name" ]; then
+  echo "Branch: $branch_name"
+else
+  echo 'Branch: detached HEAD'
+fi
+echo "Poll interval: $interval seconds"
+if [ "$auto_pull" -eq 1 ]; then
+  echo 'Auto-pull: enabled (fast-forward only, clean worktree required)'
+else
+  echo 'Auto-pull: disabled'
+fi
+
+last_status_key=''
+last_pushed_head=''
+last_pushed_upstream=''
+
+log_state_once() {
+  local key=$1
+  local message=$2
+
+  if [ "$last_status_key" != "$key" ]; then
+    echo "$message" >&2
+    last_status_key=$key
+  fi
+}
+
+clear_state_log() {
+  last_status_key=''
+}
+
+while true; do
+  if sequencer_active; then
+    log_state_once "sequencer" "Git history operation in progress in '$repo_root'; waiting."
+    sleep "$interval"
+    continue
+  fi
+
+  branch_name=$(current_branch)
+  head=$(git rev-parse HEAD)
+  can_compare_upstream=0
+  upstream_name=''
+  upstream_head=''
+  ahead=0
+  behind=0
+
+  if [ -n "$branch_name" ] && has_upstream; then
+    can_compare_upstream=1
+  fi
+
+  if [ "$auto_pull" -eq 1 ] && [ "$can_compare_upstream" -eq 1 ]; then
+    if ! fetch_upstream; then
+      log_state_once "fetch-failed:$branch_name" "git fetch failed for branch '$branch_name'; will retry."
+      sleep "$interval"
+      continue
+    fi
+  fi
+
+  if [ "$can_compare_upstream" -eq 1 ]; then
+    upstream_name=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')
+    upstream_head=$(git rev-parse '@{upstream}')
+    ahead=$(ahead_count)
+    behind=$(behind_count)
+  fi
+
+  if [ -z "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ]; then
+    log_state_once \
+      "detached:$head" \
+      "HEAD in repository '$repo_root' moved to $(git rev-parse --short "$head") in detached mode; skipping sync."
+    sleep "$interval"
+    continue
+  fi
+
+  if [ -n "$branch_name" ] && [ "${#push_args[@]}" -eq 0 ] && [ "$can_compare_upstream" -eq 0 ]; then
+    log_state_once \
+      "no-upstream:$branch_name:$head" \
+      "Branch '$branch_name' in repository '$repo_root' has no upstream; skipping $(git rev-parse --short "$head")."
+    sleep "$interval"
+    continue
+  fi
+
+  if [ "$can_compare_upstream" -eq 1 ] && [ "$behind" -gt 0 ]; then
+    if [ "$ahead" -gt 0 ]; then
+      log_state_once \
+        "diverged:$branch_name:$head:$upstream_head" \
+        "Branch '$branch_name' diverged from $upstream_name; reconcile it manually before auto-sync can continue."
+      sleep "$interval"
+      continue
+    fi
+
+    if [ "$auto_pull" -eq 0 ]; then
+      log_state_once \
+        "behind-no-pull:$branch_name:$upstream_head" \
+        "Upstream for '$branch_name' moved to $(git rev-parse --short "$upstream_head"), but pulling is disabled; skipping auto-pull."
+      sleep "$interval"
+      continue
+    fi
+
+    if ! worktree_clean; then
+      log_state_once \
+        "dirty-behind:$branch_name:$head:$upstream_head" \
+        "Upstream for '$branch_name' moved, but the worktree has pending changes; skipping auto-pull."
+      sleep "$interval"
+      continue
+    fi
+
+    if fast_forward_upstream; then
+      clear_state_log
+      if [ "$loop_forever" -eq 0 ]; then
+        exit 0
+      fi
+      sleep "$interval"
+      continue
+    fi
+
+    log_state_once \
+      "ff-failed:$branch_name:$head:$upstream_head" \
+      "Fast-forward pull failed for branch '$branch_name'; will retry."
+    sleep "$interval"
+    continue
+  fi
+
+  if [ "$can_compare_upstream" -eq 1 ] && [ "$ahead" -gt 0 ]; then
+    if [ "$head" = "$last_pushed_head" ] && [ "$upstream_head" = "$last_pushed_upstream" ]; then
+      clear_state_log
+      sleep "$interval"
+      continue
+    fi
+
+    if push_current_head; then
+      last_pushed_head="$head"
+      last_pushed_upstream="$upstream_head"
+      clear_state_log
+      if [ "$loop_forever" -eq 0 ]; then
+        exit 0
+      fi
+      sleep "$interval"
+      continue
+    fi
+
+    log_state_once \
+      "push-failed:$head:$upstream_head" \
+      "git push failed for $(git rev-parse --short "$head"); will retry."
+    sleep "$interval"
+    continue
+  fi
+
+  if [ "$can_compare_upstream" -eq 0 ] && [ "${#push_args[@]}" -gt 0 ] && [ "$head" != "$last_pushed_head" ]; then
+    if push_current_head; then
+      last_pushed_head="$head"
+      last_pushed_upstream=''
+      clear_state_log
+      if [ "$loop_forever" -eq 0 ]; then
+        exit 0
+      fi
+      sleep "$interval"
+      continue
+    fi
+
+    log_state_once \
+      "push-failed-explicit:$head" \
+      "git push failed for $(git rev-parse --short "$head"); will retry."
+    sleep "$interval"
+    continue
+  fi
+
+  clear_state_log
+  sleep "$interval"
+done

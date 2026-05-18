@@ -14,13 +14,15 @@ Usage: $script_name [--once] [--interval SECONDS] [--no-pull] [--] [git push arg
 
 Keep a branch in sync:
 - Push local commits when the current branch is ahead of its upstream.
-- Fast-forward to upstream changes when pulling is enabled and the worktree is clean.
+- Fast-forward to upstream changes when only upstream moved.
+- Rebase committed local changes onto upstream when both sides moved and
+  the worktree is clean.
 
 Options:
   --once              Exit after the first successful sync action.
   --interval SECONDS  Poll interval. Defaults to 10 seconds with pulling enabled,
                       or 2 seconds with --no-pull.
-  --no-pull           Disable automatic fast-forward pulls.
+  --no-pull           Disable automatic fast-forward pulls and rebases.
   -h, --help          Show this help text.
 
 Anything after -- is passed directly to git push.
@@ -148,9 +150,13 @@ push_current_head() {
   head_short=$(git rev-parse --short HEAD)
 
   if [ "${#push_args[@]}" -gt 0 ]; then
-    git push "${push_args[@]}"
+    if ! git push "${push_args[@]}"; then
+      return 1
+    fi
   else
-    git push
+    if ! git push; then
+      return 1
+    fi
   fi
 
   echo "Pushed $head_short at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
@@ -163,10 +169,27 @@ fast_forward_upstream() {
 
   before_short=$(git rev-parse --short HEAD)
   upstream_name=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')
-  git merge --ff-only --quiet '@{upstream}'
+  if ! git merge --ff-only --quiet '@{upstream}'; then
+    return 1
+  fi
   after_short=$(git rev-parse --short HEAD)
 
   echo "Fast-forwarded $before_short to $after_short from $upstream_name at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+}
+
+rebase_onto_upstream() {
+  local before_short
+  local after_short
+  local upstream_name
+
+  before_short=$(git rev-parse --short HEAD)
+  upstream_name=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')
+  if ! git rebase --quiet "$upstream_name"; then
+    return 1
+  fi
+  after_short=$(git rev-parse --short HEAD)
+
+  echo "Rebased $before_short to $after_short onto $upstream_name at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 }
 
 branch_name=$(current_branch)
@@ -190,7 +213,7 @@ else
 fi
 echo "Poll interval: $interval seconds"
 if [ "$auto_pull" -eq 1 ]; then
-  echo 'Auto-pull: enabled (fast-forward only, clean worktree required)'
+  echo 'Auto-pull: enabled (fast-forward/rebase, clean worktree required)'
 else
   echo 'Auto-pull: disabled'
 fi
@@ -264,18 +287,10 @@ while true; do
   fi
 
   if [ "$can_compare_upstream" -eq 1 ] && [ "$behind" -gt 0 ]; then
-    if [ "$ahead" -gt 0 ]; then
-      log_state_once \
-        "diverged:$branch_name:$head:$upstream_head" \
-        "Branch '$branch_name' diverged from $upstream_name; reconcile it manually before auto-sync can continue."
-      sleep "$interval"
-      continue
-    fi
-
     if [ "$auto_pull" -eq 0 ]; then
       log_state_once \
         "behind-no-pull:$branch_name:$upstream_head" \
-        "Upstream for '$branch_name' moved to $(git rev-parse --short "$upstream_head"), but pulling is disabled; skipping auto-pull."
+        "Upstream for '$branch_name' moved to $(git rev-parse --short "$upstream_head"), but pulling is disabled; skipping auto-pull/rebase."
       sleep "$interval"
       continue
     fi
@@ -283,25 +298,55 @@ while true; do
     if ! worktree_clean; then
       log_state_once \
         "dirty-behind:$branch_name:$head:$upstream_head" \
-        "Upstream for '$branch_name' moved, but the worktree has pending changes; skipping auto-pull."
+        "Upstream for '$branch_name' moved, but the worktree has pending changes; waiting before auto-pull/rebase."
       sleep "$interval"
       continue
     fi
 
-    if fast_forward_upstream; then
-      clear_state_log
-      if [ "$loop_forever" -eq 0 ]; then
-        exit 0
+    if [ "$ahead" -gt 0 ]; then
+      if rebase_onto_upstream; then
+        clear_state_log
+
+        head=$(git rev-parse HEAD)
+        upstream_head=$(git rev-parse '@{upstream}')
+        ahead=$(ahead_count)
+        behind=$(behind_count)
+
+        if [ "$behind" -gt 0 ]; then
+          log_state_once \
+            "behind-after-rebase:$branch_name:$head:$upstream_head" \
+            "Upstream for '$branch_name' moved again while rebasing; will retry."
+          sleep "$interval"
+          continue
+        fi
+
+        if [ "$ahead" -eq 0 ] && [ "$loop_forever" -eq 0 ]; then
+          exit 0
+        fi
+      else
+        log_state_once \
+          "rebase-failed:$branch_name:$head:$upstream_head" \
+          "Auto-rebase of '$branch_name' onto $upstream_name failed; resolve or abort the rebase manually before auto-sync can continue."
+        sleep "$interval"
+        continue
       fi
+    else
+      if fast_forward_upstream; then
+        clear_state_log
+        if [ "$loop_forever" -eq 0 ]; then
+          exit 0
+        fi
+        sleep "$interval"
+        continue
+      fi
+
+      log_state_once \
+        "ff-failed:$branch_name:$head:$upstream_head" \
+        "Fast-forward pull failed for branch '$branch_name'; will retry."
       sleep "$interval"
       continue
     fi
 
-    log_state_once \
-      "ff-failed:$branch_name:$head:$upstream_head" \
-      "Fast-forward pull failed for branch '$branch_name'; will retry."
-    sleep "$interval"
-    continue
   fi
 
   if [ "$can_compare_upstream" -eq 1 ] && [ "$ahead" -gt 0 ]; then

@@ -1,9 +1,12 @@
-DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-. "$DIR/vars"
-. "$DIR/ps1"
-. "$DIR/functions"
-. "$DIR/misc"
+BASH_FILES_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$BASH_FILES_DIR/vars"
+. "$BASH_FILES_DIR/ps1"
+. "$BASH_FILES_DIR/functions"
+. "$BASH_FILES_DIR/misc"
 
 if [ -e "$HOME/.bash_files/index" ]; then
   . "$HOME/.bash_files/index"
 fi
+
+unset BASH_FILES_DIR
+
